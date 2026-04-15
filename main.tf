@@ -118,6 +118,18 @@ resource "ibm_backup_recovery_data_source_connection" "connection" {
   instance_id         = local.backup_recovery_instance.guid
   region              = local.brs_instance_region
   connection_env_type = var.connection_env_type
+
+  lifecycle {
+    replace_triggered_by = [time_sleep.wait_before_connection_destroy[0]]
+  }
+}
+
+# Wait before destroying the connection to ensure all sources are unregistered
+resource "time_sleep" "wait_before_connection_destroy" {
+  count            = var.connection_name != null && var.create_new_connection ? 1 : 0
+  destroy_duration = "2m"
+
+  depends_on = [ibm_backup_recovery_data_source_connection.connection]
 }
 
 resource "time_rotating" "token_rotation" {
@@ -164,7 +176,7 @@ locals {
 
   resolved_policy_ids = merge(
     { for k, v in ibm_backup_recovery_protection_policy.protection_policy : k => replace(v.id, "${local.tenant_id}::", "") },
-    { for k, v in data.ibm_backup_recovery_protection_policies.existing_policies : k => v.policies[0].id }
+    { for k, v in data.ibm_backup_recovery_protection_policies.existing_policies : k => one(v.policies[*].id) if length(v.policies) > 0 }
   )
 }
 
