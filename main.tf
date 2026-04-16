@@ -52,6 +52,38 @@ resource "ibm_resource_instance" "backup_recovery_instance" {
   }
 }
 
+# Reclaim instance after deletion (IBM provider v2.x requires explicit reclamation)
+resource "terraform_data" "reclaim_instance" {
+  count = local.create_new_instance ? 1 : 0
+
+  depends_on = [terraform_data.delete_policies]
+
+  input = {
+    instance_crn = ibm_resource_instance.backup_recovery_instance[0].crn
+    api_key      = var.ibmcloud_api_key
+  }
+
+  lifecycle {
+    replace_triggered_by = [ibm_resource_instance.backup_recovery_instance[0]]
+  }
+
+  provisioner "local-exec" {
+    when        = destroy
+    command     = <<-EOT
+      INSTANCE_GUID=$(echo "${self.input.instance_crn}" | cut -d: -f8)
+      sleep 45
+      IAM_TOKEN=$(curl -s -X POST "https://iam.cloud.ibm.com/identity/token" \
+        -H "Content-Type: application/x-www-form-urlencoded" \
+        -d "grant_type=urn:ibm:params:oauth:grant-type:apikey&apikey=${self.input.api_key}" | \
+        jq -r '.access_token')
+      curl -s -X POST \
+        -H "Authorization: Bearer $IAM_TOKEN" \
+        "https://resource-controller.cloud.ibm.com/v1/reclamations/$INSTANCE_GUID/actions/reclaim" || true
+    EOT
+    interpreter = ["/bin/bash", "-c"]
+  }
+}
+
 data "ibm_iam_access_tag" "access_tag" {
   for_each = local.create_new_instance && length(var.access_tags) != 0 ? toset(var.access_tags) : []
   name     = each.value
