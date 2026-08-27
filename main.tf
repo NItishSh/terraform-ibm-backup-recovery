@@ -10,7 +10,7 @@ locals {
   brs_instance_guid                    = local.create_new_instance ? null : module.crn_parser[0].service_instance
   brs_instance_region                  = local.create_new_instance ? var.region : module.crn_parser[0].region
   backup_recovery_instance             = local.create_new_instance ? ibm_resource_instance.backup_recovery_instance[0] : data.ibm_resource_instance.backup_recovery_instance[0]
-  backup_recovery_connection           = var.connection_name == null ? null : (var.create_new_connection ? try(ibm_backup_recovery_data_source_connection.connection[0], null) : try(data.ibm_backup_recovery_data_source_connections.connections[0].connections[0], null))
+  backup_recovery_connection           = var.connection_name == null ? null : (var.create_new_connection ? try(ibm_backup_recovery_data_source_connection.connection[0], null) : try(one(data.ibm_backup_recovery_data_source_connections.connections[0].connections), null))
   tenant_id                            = "${local.backup_recovery_instance.extensions.tenant-id}/"
   backup_recovery_instance_public_url  = local.backup_recovery_instance.extensions["endpoints.public"]
   backup_recovery_instance_private_url = local.backup_recovery_instance.extensions["endpoints.private"]
@@ -122,6 +122,7 @@ data "ibm_backup_recovery_data_source_connections" "connections" {
   endpoint_type    = var.endpoint_type
   instance_id      = local.backup_recovery_instance.guid
   region           = local.brs_instance_region
+  service_name     = var.service_type
 }
 
 resource "ibm_backup_recovery_data_source_connection" "connection" {
@@ -132,6 +133,7 @@ resource "ibm_backup_recovery_data_source_connection" "connection" {
   instance_id         = local.backup_recovery_instance.guid
   region              = local.brs_instance_region
   connection_env_type = var.connection_env_type
+  service_name        = var.service_type
 }
 # This resource deletes all connectors registered against the connection before
 # the connection itself is destroyed. Without this, BRS will reject the connection
@@ -164,8 +166,15 @@ resource "terraform_data" "cleanup_connectors" {
 }
 
 resource "time_rotating" "token_rotation" {
-  count         = local.create_registration_token ? 1 : 0
-  rotation_days = 1
+  count          = local.create_registration_token ? 1 : 0
+  rotation_hours = var.token_rotation_hours
+
+  lifecycle {
+    # Ignore the old rotation_days attribute that existed before token_rotation_hours
+    # was introduced. Without this, upgrading from a state that stored rotation_days=1
+    # causes time_rotating to detect a diff and force replacement of the token.
+    ignore_changes = [rotation_days]
+  }
 }
 
 # This terraform_data resource acts as a rotation trigger. When time_rotating
@@ -183,11 +192,12 @@ resource "terraform_data" "token_rotation_trigger" {
 
 resource "ibm_backup_recovery_connection_registration_token" "registration_token" {
   count           = local.create_registration_token ? 1 : 0
-  connection_id   = var.create_new_connection ? try(ibm_backup_recovery_data_source_connection.connection[0].connection_id, "") : try(data.ibm_backup_recovery_data_source_connections.connections[0].connections[0].connection_id, "")
+  connection_id   = var.create_new_connection ? try(ibm_backup_recovery_data_source_connection.connection[0].connection_id, "") : try(one(data.ibm_backup_recovery_data_source_connections.connections[0].connections).connection_id, "")
   x_ibm_tenant_id = local.tenant_id
   endpoint_type   = var.endpoint_type
   instance_id     = local.backup_recovery_instance.guid
   region          = local.brs_instance_region
+  service_name    = var.service_type
 
   lifecycle {
     replace_triggered_by = [
@@ -219,6 +229,7 @@ data "ibm_backup_recovery_protection_policies" "existing_policies" {
   region          = local.brs_instance_region
   endpoint_type   = var.endpoint_type
   policy_names    = [each.key]
+  service_name    = var.service_type
 }
 
 resource "ibm_backup_recovery_protection_policy" "protection_policy" {
@@ -229,6 +240,7 @@ resource "ibm_backup_recovery_protection_policy" "protection_policy" {
   endpoint_type   = var.endpoint_type
   instance_id     = local.backup_recovery_instance.guid
   region          = local.brs_instance_region
+  service_name    = var.service_type
 
   backup_policy {
     dynamic "bmr" {

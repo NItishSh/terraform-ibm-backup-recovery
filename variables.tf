@@ -12,11 +12,6 @@ variable "existing_brs_instance_crn" {
   type        = string
   description = "The CRN of the existing Backup & Recovery Service instance. If not provided, a new instance will be created."
   default     = null
-
-  validation {
-    condition     = var.existing_brs_instance_crn == null || var.region == try(element(split(":", var.existing_brs_instance_crn), 5), "")
-    error_message = "The provided 'region' does not match the region derived from 'brs_instance_crn'. Please ensure they match."
-  }
 }
 
 variable "create_new_instance" {
@@ -113,8 +108,8 @@ variable "create_new_connection" {
 
 variable "connection_name" {
   type        = string
-  description = "Name of the data source connection. If `create_new_connection` is `true` (default), a new connection with this name will be created. If `false`, an existing connection with this name must exist."
-  default     = "brs-connection"
+  description = "Name of the data source connection. If `create_new_connection` is `true` (default), a new connection with this name will be created. If `false`, an existing connection with this name must exist. Set to `null` (default) to skip connection creation and lookup entirely."
+  default     = null
 }
 
 variable "connection_env_type" {
@@ -143,6 +138,18 @@ variable "install_required_binaries" {
   default     = true
   description = "When enabled, a script will run during resource destroy to ensure `jq` is available and if not attempt to download it from the public internet and install it to /tmp. Set to false to skip this step."
   nullable    = false
+}
+
+variable "token_rotation_hours" {
+  type        = number
+  default     = 20
+  description = "Hours between registration token rotations. Must be less than the BRS token lifetime (24 h) to eliminate the race window between token expiry and DSC scale-up. See guide section 7.5.2."
+  nullable    = false
+
+  validation {
+    condition     = var.token_rotation_hours >= 1 && var.token_rotation_hours <= 23
+    error_message = "token_rotation_hours must be between 1 and 23."
+  }
 }
 
 ###############################
